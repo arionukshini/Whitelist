@@ -1,0 +1,2 @@
+# Whitelist
+Focus Mode
