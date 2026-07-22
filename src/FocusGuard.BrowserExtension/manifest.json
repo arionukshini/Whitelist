@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "FocusGuard Website Allowlist",
+  "version": "0.1.0",
+  "description": "Blocks non-allowed websites while a FocusGuard desktop session is active.",
+  "permissions": ["tabs", "webNavigation"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1:47837/*"],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+
