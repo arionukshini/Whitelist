@@ -10,7 +10,8 @@ public sealed class ProcessEnforcementService : IDisposable
     {
         "System", "Idle", "Registry", "smss", "csrss", "wininit", "winlogon", "services", "lsass",
         "svchost", "fontdrvhost", "dwm", "explorer", "spoolsv", "sihost", "taskhostw", "RuntimeBroker",
-        "SearchIndexer", "SecurityHealthService", "MsMpEng", "FocusGuard.UI"
+        "SearchIndexer", "SecurityHealthService", "MsMpEng", "FocusGuard.UI", "dotnet", "devenv",
+        "MSBuild", "VBCSCompiler", "chrome", "msedge", "brave", "firefox", "vivaldi", "opera"
     };
 
     private readonly FocusGuardStore _store;
@@ -84,8 +85,13 @@ public sealed class ProcessEnforcementService : IDisposable
                 return;
             }
 
+            if (process.Id == Environment.ProcessId)
+            {
+                return;
+            }
+
             var path = process.MainModule?.FileName;
-            if (string.IsNullOrWhiteSpace(path))
+            if (string.IsNullOrWhiteSpace(path) || process.MainWindowHandle == IntPtr.Zero)
             {
                 return;
             }
@@ -110,4 +116,3 @@ public sealed class ProcessEnforcementService : IDisposable
 
     public void Dispose() => _timer.Dispose();
 }
-

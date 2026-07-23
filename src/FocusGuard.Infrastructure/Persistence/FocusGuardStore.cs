@@ -66,6 +66,20 @@ public sealed class FocusGuardStore
         return app;
     }
 
+    public async Task RemoveApplicationAsync(int applicationId)
+    {
+        var application = await _db.Applications.FindAsync(applicationId);
+        if (application is null)
+        {
+            return;
+        }
+
+        _db.RemoveRange(_db.Set<ProfileApplication>().Where(x => x.ApplicationEntryId == applicationId));
+        _db.RemoveRange(_db.Set<SessionApplication>().Where(x => x.ApplicationEntryId == applicationId));
+        _db.Applications.Remove(application);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<WebsiteRule> AddWebsiteAsync(string input, bool includeSubdomains)
     {
         var domain = DomainRuleMatcher.NormalizeDomain(input);
@@ -81,6 +95,20 @@ public sealed class FocusGuardStore
         _db.Websites.Add(website);
         await _db.SaveChangesAsync();
         return website;
+    }
+
+    public async Task RemoveWebsiteAsync(int websiteId)
+    {
+        var website = await _db.Websites.FindAsync(websiteId);
+        if (website is null)
+        {
+            return;
+        }
+
+        _db.RemoveRange(_db.Set<ProfileWebsite>().Where(x => x.WebsiteRuleId == websiteId));
+        _db.RemoveRange(_db.Set<SessionWebsite>().Where(x => x.WebsiteRuleId == websiteId));
+        _db.Websites.Remove(website);
+        await _db.SaveChangesAsync();
     }
 
     public async Task<Profile> CreateProfileAsync(string name, IEnumerable<int> applicationIds, IEnumerable<int> websiteIds)
