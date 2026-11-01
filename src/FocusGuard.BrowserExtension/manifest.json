@@ -9,6 +9,10 @@
   "background": {
     "service_worker": "service-worker.js"
   },
+  "action": {
+    "default_title": "Whitelist Lock In",
+    "default_popup": "popup.html"
+  },
   "web_accessible_resources": [
     {
       "resources": ["blocked.html", "blocked.css"],

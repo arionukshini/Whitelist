@@ -30,6 +30,7 @@ public sealed class MainViewModel : ObservableObject
 
     public MainViewModel(FocusGuardStore store, ApplicationDiscoveryService applicationDiscovery, ProcessEnforcementService enforcement, WebsiteAllowlistServer websiteServer)
     {
+        _themePreference = App.ThemePreference;
         _store = store;
         _applicationDiscovery = applicationDiscovery;
         _enforcement = enforcement;

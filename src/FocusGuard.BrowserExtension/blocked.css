@@ -1,24 +1,26 @@
 * { box-sizing: border-box; }
+:root { color-scheme: dark light; --page: #151817; --surface: #202522; --ink: #f1f4f2; --muted: #a5b0aa; --border: #343c37; --accent: #8ad7a9; --accent-surface: #293a30; }
+@media (prefers-color-scheme: light) { :root { --page: #f3f5f2; --surface: #fbfcfa; --ink: #202822; --muted: #68746c; --border: #dce2db; --accent: #317650; --accent-surface: #dcebe0; } }
 html, body { min-height: 100%; margin: 0; }
 body {
   display: grid;
   place-items: center;
   padding: 28px;
-  background: #111513;
-  color: #f1f3f1;
+  background: var(--page);
+  color: var(--ink);
   font: 16px/1.6 "Segoe UI", system-ui, sans-serif;
 }
 main {
   width: min(560px, 100%);
   padding: 44px;
-  border: 1px solid #29342f;
+  border: 1px solid var(--border);
   border-radius: 20px;
-  background: #191f1c;
+  background: var(--surface);
   box-shadow: 0 24px 90px #0005;
 }
-.brand { margin: 0; color: #8fe1ac; font-size: 11px; font-weight: 700; letter-spacing: .16em; }
-.mark { display: grid; place-items: center; width: 42px; height: 42px; margin-top: 32px; border-radius: 13px; background: #26382e; color: #91e3ae; font-size: 28px; }
+.brand { margin: 0; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .16em; }
+.mark { display: grid; place-items: center; width: 42px; height: 42px; margin-top: 32px; border-radius: 13px; background: var(--accent-surface); color: var(--accent); font-size: 28px; }
 h1 { margin: 20px 0 12px; font-size: clamp(30px, 7vw, 42px); line-height: 1.08; letter-spacing: -.035em; }
-p { color: #c3cdc7; }
-.remaining { margin-top: 28px; color: #89968e; font-size: 13px; }
+p { color: var(--muted); }
+.remaining { margin-top: 28px; color: var(--muted); font-size: 13px; }
 @media (max-width: 500px) { main { padding: 30px; } }

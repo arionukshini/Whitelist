@@ -5,6 +5,7 @@ using FocusGuard.UI.ViewModels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 
@@ -15,6 +16,9 @@ public partial class App : System.Windows.Application
     private static readonly string PreferencesPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FocusGuard", "preferences.json");
     private static ResourceDictionary? _activeTheme;
     private static string _themePreference = "System";
+    public static string ThemePreference => _themePreference;
+    public static event Action<bool>? ThemeChanged;
+    public static bool IsDarkTheme => Current.Resources["BgBrush"] is System.Windows.Media.SolidColorBrush brush && brush.Color.R < 128;
     private ServiceProvider? _serviceProvider;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
     private Mutex? _singleInstance;
@@ -30,12 +34,18 @@ public partial class App : System.Windows.Application
         if (_activeTheme is not null) dictionaries.Remove(_activeTheme);
         dictionaries.Insert(0, next);
         _activeTheme = next;
+        ThemeChanged?.Invoke(dark);
     }
 
     public static async Task SaveThemePreferenceAsync(string preference)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(PreferencesPath)!);
-        await File.WriteAllTextAsync(PreferencesPath, JsonSerializer.Serialize(new { Theme = preference }));
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(PreferencesPath)!);
+            await File.WriteAllTextAsync(PreferencesPath, JsonSerializer.Serialize(new { Theme = preference }));
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static bool IsWindowsLightTheme()
@@ -110,24 +120,39 @@ public partial class App : System.Windows.Application
         {
             ShowImageMargin = false,
             ShowCheckMargin = false,
-            Renderer = new System.Windows.Forms.ToolStripProfessionalRenderer(new System.Windows.Forms.ProfessionalColorTable())
+            Padding = new System.Windows.Forms.Padding(6)
         };
-        menu.Items.Add("WHITELIST LOCK IN", null, null).Enabled = false;
-        var status = new System.Windows.Forms.ToolStripMenuItem(viewModel.IsSessionActive ? $"Focus active · {viewModel.RemainingText} remaining" : "Ready when you are") { Enabled = false };
+        var menuHeading = new System.Windows.Forms.ToolStripMenuItem("WHITELIST LOCK IN") { Enabled = false, Padding = new System.Windows.Forms.Padding(10, 7, 10, 7) };
+        menu.Items.Add(menuHeading);
+        var status = new System.Windows.Forms.ToolStripMenuItem(viewModel.IsSessionActive ? $"Focus active · {viewModel.RemainingText} remaining" : "Ready when you are") { Enabled = false, Padding = new System.Windows.Forms.Padding(10, 6, 10, 6) };
         menu.Items.Add(status);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
-        menu.Items.Add("Open Whitelist Lock In", null, (_, _) =>
+        var openItem = new System.Windows.Forms.ToolStripMenuItem("Open Whitelist Lock In", null, (_, _) =>
         {
             window.Show();
             window.WindowState = WindowState.Normal;
             window.Activate();
-        });
-        menu.Items.Add("Exit and end focus", null, async (_, _) =>
+        }) { Padding = new System.Windows.Forms.Padding(10, 8, 10, 8) };
+        menu.Items.Add(openItem);
+        var exitItem = new System.Windows.Forms.ToolStripMenuItem("Exit") { ToolTipText = "Available after the focus session ends.", Padding = new System.Windows.Forms.Padding(10, 8, 10, 8) };
+        exitItem.Click += async (_, _) =>
         {
-            await _serviceProvider.GetRequiredService<FocusGuardStore>().EndActiveSessionAsync();
+            if (viewModel.IsSessionActive) return;
             _isExiting = true;
             Shutdown();
-        });
+        };
+        menu.Items.Add(exitItem);
+        menu.Opening += (_, _) =>
+        {
+            status.Text = viewModel.IsSessionActive ? $"Focus active · {viewModel.RemainingText} remaining" : "Ready when you are";
+            exitItem.Enabled = !viewModel.IsSessionActive;
+            var background = ((System.Windows.Media.SolidColorBrush)Current.Resources["PanelBrush"]).Color;
+            var foreground = ((System.Windows.Media.SolidColorBrush)Current.Resources["InkBrush"]).Color;
+            var dark = background.R < 128;
+            menu.BackColor = System.Drawing.Color.FromArgb(background.A, background.R, background.G, background.B);
+            menu.ForeColor = System.Drawing.Color.FromArgb(foreground.A, foreground.R, foreground.G, foreground.B);
+            menu.Renderer = new System.Windows.Forms.ToolStripProfessionalRenderer(new TrayColorTable(dark));
+        };
         _trayIcon = new System.Windows.Forms.NotifyIcon
         {
             Text = "Whitelist Lock In",
@@ -135,9 +160,6 @@ public partial class App : System.Windows.Application
             ContextMenuStrip = menu,
             Visible = true
         };
-        var trayStatusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
-        trayStatusTimer.Tick += (_, _) => status.Text = viewModel.IsSessionActive ? $"Focus active · {viewModel.RemainingText} remaining" : "Ready when you are";
-        trayStatusTimer.Start();
         _trayIcon.DoubleClick += (_, _) =>
         {
             window.Show();

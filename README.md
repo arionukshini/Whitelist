@@ -8,7 +8,9 @@ Whitelist Lock In is a Windows 10/11 focus utility for choosing desktop apps and
 2. Search the app list and tick the desktop apps you want to keep available.
 3. Choose a session duration and select **Start focus**.
 4. Optionally open **Websites**, add sites you need, and tick them. During a session, the browser extension allows those domains and blocks other web page navigations.
-5. Closing the window hides the app in the notification area and keeps the session running. Choose **Exit and end focus** from the tray menu to end it and exit.
+5. Closing the window hides the app in the notification area and keeps the session running. The tray menu shows the live session status; Exit is disabled until the active session has ended.
+
+Choose **Settings → Appearance** to select **System**, **Light**, or **Dark**. The preference is saved locally; System follows the Windows app theme. The main title bar remains native so window snapping, resizing, and system controls keep their normal behavior, with its dark caption color matching the selected theme.
 
 Use **Saved setup** on the Focus screen to save the current app and website selections under a name. Choose that setup later to restore its selections. Starting a session from a saved setup records which setup was used.
 
@@ -22,7 +24,7 @@ The app stores an active session end time and allowed apps/sites in SQLite, resu
 
 ## Website extension
 
-The included Manifest V3 extension uses Chrome's dynamic `declarativeNetRequest` rules. It applies rules to top-level HTTP/HTTPS page navigations, allows the selected domain (and subdomains when enabled), and redirects disallowed pages to the bundled focus page. It does not inspect browsing history or collect page contents. Dynamic rules survive browser restarts; when the desktop is unreachable, the last valid rules remain until the saved session end. [Chrome documents that dynamic DNR rules persist across browser sessions.](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest)
+The included Manifest V3 extension uses Chrome's dynamic `declarativeNetRequest` rules. It applies rules to top-level HTTP/HTTPS page navigations, allows the selected domain (and subdomains when enabled), and redirects disallowed pages to the bundled focus page. The toolbar popup reports desktop connection state, active session, time remaining, and allowed-site count. The blocked page and popup follow the browser's system light/dark theme. It does not inspect browsing history or collect page contents. Dynamic rules survive browser restarts; when the desktop is unreachable, the last valid rules remain until the saved session end. [Chrome documents that dynamic DNR rules persist across browser sessions.](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest)
 
 The app's loopback API listens only on `127.0.0.1:47837`, accepts the pinned extension origin, returns the current active session, and exposes a connection indicator in the sidebar. The desktop database remains the source of truth. The bridge uses loopback HTTP rather than Native Messaging; no Native Messaging host or browser registry entries are installed.
 
