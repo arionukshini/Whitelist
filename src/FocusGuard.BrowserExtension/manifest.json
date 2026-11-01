@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Whitelist Lock In: Website Focus",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Enforces website focus sessions managed by Whitelist Lock In for Windows.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5+AUEEGBxYad/cFyvUnytktn3h7jWXgexBv5OBYDEQGDQ9F3hJD5M17egbTED4qfC6qhzPxDWveM+TgHJACHf9Gr3qYesQ7C1cLXNKCMe5HcnvOgMMS2Z7bqmnPsZQAB/CEvXCioix9ugRqxBN7zcfoiIqVd6XNwy34q5nYJYKVrlqaV4YP052hbcnDZd6PHPwabO9RnN3pF8pOkbeSygmaEXIXbD1bg3wdVV0CNm/EXUr0Tcr28NOkcS+pKQahvbpkZPj9tGk81MUrQUV0BsC4Aqes3MgwdBA8Viygwr96DOGk1UEAuD/MF6QtGIaLeXybWY32gryHNM7Y5qyK7FwIDAQAB",
   "permissions": ["declarativeNetRequest", "alarms", "storage", "nativeMessaging"],

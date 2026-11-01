@@ -1,7 +1,8 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$publishDir = Join-Path $repoRoot "artifacts\publish\win-x64"
+$publishDir = Join-Path $repoRoot "artifacts\publish\win-x64-v2.0.0"
 $installerDir = Join-Path $repoRoot "artifacts\installer"
+$installerName = "WhitelistLockIn-Setup-2.0.0-x64.exe"
 $innoCompiler = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "artifacts\publish")) + [IO.Path]::DirectorySeparatorChar
 $publishFullPath = [IO.Path]::GetFullPath($publishDir)
@@ -45,4 +46,4 @@ Write-Host "Building the Windows installer..."
 if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed." }
 
 Write-Host "Release files:"
-Get-Item (Join-Path $publishDir "WhitelistLockIn.exe"), (Join-Path $installerDir "WhitelistLockIn-Setup-1.0.0-x64.exe") | Select-Object FullName, Length
+Get-Item (Join-Path $publishDir "WhitelistLockIn.exe"), (Join-Path $installerDir $installerName) | Select-Object FullName, Length

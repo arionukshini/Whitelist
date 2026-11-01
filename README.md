@@ -26,6 +26,8 @@ The app stores an active session end time and allowed apps/sites in SQLite, resu
 
 The included Manifest V3 extension uses Chrome's dynamic `declarativeNetRequest` rules. It applies rules to top-level HTTP/HTTPS page navigations, allows the selected domain (and subdomains when enabled), and redirects disallowed pages to the bundled focus page. The toolbar popup reports desktop connection state, active session, time remaining, and allowed-site count. The blocked page and popup follow the browser's system light/dark theme. It does not inspect browsing history or collect page contents. Dynamic rules survive browser restarts; when the desktop is unreachable, the last valid rules remain until the saved session end. [Chrome documents that dynamic DNR rules persist across browser sessions.](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest)
 
+Browsers are not globally exempt from application filtering. If you want to browse during an app-whitelist session, select Chrome or Edge in **Allowed apps** and connect the extension. The extension then limits browser navigation to the websites selected for that session. If the browser is not selected, app filtering may close it; if the extension is disconnected, website rules cannot be guaranteed.
+
 Installed releases use a Chrome Native Messaging host to read the current session from the desktop database. The per-user installer registers the host for Chrome and Edge under `HKCU`; it only accepts messages from the pinned extension ID. The desktop app reports connection activity through a local heartbeat file. Unpacked development builds also retain the loopback endpoint on `127.0.0.1:47837` as a fallback.
 
 To install the unpacked extension:
@@ -75,8 +77,8 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 
 Outputs:
 
-- `artifacts\publish\win-x64\WhitelistLockIn.exe` — single-file, self-contained x64 executable.
-- `artifacts\publish\win-x64\BrowserExtension\` — unpacked browser extension.
-- `artifacts\installer\WhitelistLockIn-Setup-1.0.0-x64.exe` — per-user installer.
+- `artifacts\publish\win-x64-v2.0.0\WhitelistLockIn.exe` — single-file, self-contained x64 executable.
+- `artifacts\publish\win-x64-v2.0.0\BrowserExtension\` — unpacked browser extension.
+- `artifacts\installer\WhitelistLockIn-Setup-2.0.0-x64.exe` — per-user installer.
 
 The installer creates Start Menu and optional desktop shortcuts. Uninstall removes the installed application and shortcuts; it intentionally preserves `%LOCALAPPDATA%\FocusGuard\focusguard.db`. The release is unsigned; clean-machine SmartScreen behavior, installation, and uninstall should be verified before public distribution.

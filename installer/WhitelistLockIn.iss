@@ -1,5 +1,5 @@
 #define AppName "Whitelist Lock In"
-#define AppVersion "1.0.0"
+#define AppVersion "2.0.0"
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish\win-x64"
 #endif
@@ -20,7 +20,7 @@ UninstallDisplayIcon={app}\WhitelistLockIn.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=2.0.0.0
 VersionInfoProductName=Whitelist Lock In
 VersionInfoProductVersion={#AppVersion}
 CloseApplications=yes
