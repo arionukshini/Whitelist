@@ -5,11 +5,18 @@ namespace FocusGuard.Infrastructure.Windows;
 
 public sealed class ApplicationDiscoveryService
 {
+    private static readonly HashSet<string> LegacyBackgroundHelperNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "APSDaemon", "AacAmbientLighting", "CTMsgHostChrome", "GameInputRedistService", "MSBuild",
+        "Microsoft.ServiceHub.Controller", "asus_framework", "msedgewebview2", "git", "iCloudDrive",
+        "iCloudServices", "node", "node_repl", "VBCSCompiler"
+    };
+
     private static readonly HashSet<string> ExcludedProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "ApplicationFrameHost", "SearchHost", "SearchApp", "ShellExperienceHost", "StartMenuExperienceHost",
         "TextInputHost", "Widgets", "WidgetService", "SystemSettings", "Taskmgr", "LockApp",
-        "explorer", "dwm", "sihost", "RuntimeBroker", "FocusGuard.UI", "devenv", "dotnet"
+        "explorer", "dwm", "sihost", "RuntimeBroker", "FocusGuard.UI", "WhitelistLockIn", "devenv", "dotnet"
     };
 
     public IReadOnlyList<ApplicationEntry> DiscoverRunningApplications()
@@ -24,6 +31,33 @@ public sealed class ApplicationDiscoveryService
             .GroupBy(x => x.ExecutablePath, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.First())
             .OrderBy(x => x.Name)
+            .ToList();
+    }
+
+    public IReadOnlyList<ApplicationEntry> FilterUserFacingApplications(IEnumerable<ApplicationEntry> entries)
+    {
+        var visiblePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hiddenRunningPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                try
+                {
+                    var path = process.MainModule?.FileName;
+                    if (string.IsNullOrWhiteSpace(path)) continue;
+                    if (process.MainWindowHandle != IntPtr.Zero && !string.IsNullOrWhiteSpace(process.MainWindowTitle))
+                        visiblePaths.Add(path);
+                    else
+                        hiddenRunningPaths.Add(path);
+                }
+                catch { }
+            }
+        }
+
+        return entries
+            .Where(entry => IsUserFacingApplication(entry.Name, entry.ExecutablePath))
+            .Where(entry => !hiddenRunningPaths.Contains(entry.ExecutablePath) || visiblePaths.Contains(entry.ExecutablePath))
             .ToList();
     }
 
@@ -49,9 +83,14 @@ public sealed class ApplicationDiscoveryService
             .ToList();
     }
 
-    public static bool IsUserFacingApplication(string processName, string executablePath)
+    public static bool IsUserFacingApplication(string processName, string executablePath, string? windowTitle = null)
     {
         if (string.IsNullOrWhiteSpace(processName) || string.IsNullOrWhiteSpace(executablePath))
+        {
+            return false;
+        }
+
+        if (windowTitle is not null && string.IsNullOrWhiteSpace(windowTitle))
         {
             return false;
         }
@@ -77,12 +116,22 @@ public sealed class ApplicationDiscoveryService
             && !HasPathSegment(executablePath, "Intel");
     }
 
+    public static bool IsLegacyBackgroundHelper(ApplicationEntry entry) =>
+        LegacyBackgroundHelperNames.Contains(entry.Name)
+        || LegacyBackgroundHelperNames.Contains(Path.GetFileNameWithoutExtension(entry.ExecutablePath));
+
+    public static string GetFriendlyName(string executablePath)
+    {
+        var description = FileVersionInfo.GetVersionInfo(executablePath).FileDescription?.Trim();
+        return !string.IsNullOrWhiteSpace(description) ? description : Path.GetFileNameWithoutExtension(executablePath);
+    }
+
     private static ApplicationEntry? TryCreateEntry(Process process)
     {
         try
         {
             // Services and Windows shell components do not belong in a focus allowlist.
-            if (process.MainWindowHandle == IntPtr.Zero)
+            if (process.MainWindowHandle == IntPtr.Zero || string.IsNullOrWhiteSpace(process.MainWindowTitle))
             {
                 return null;
             }
@@ -95,8 +144,9 @@ public sealed class ApplicationDiscoveryService
 
             return new ApplicationEntry
             {
-                Name = Path.GetFileNameWithoutExtension(path),
-                ExecutablePath = path
+                Name = GetFriendlyName(path),
+                ExecutablePath = path,
+                IconPath = path
             };
         }
         catch

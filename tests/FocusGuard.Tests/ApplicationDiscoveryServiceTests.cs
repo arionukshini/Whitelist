@@ -22,4 +22,23 @@ public sealed class ApplicationDiscoveryServiceTests
     {
         Assert.False(ApplicationDiscoveryService.IsUserFacingApplication(processName, path));
     }
+
+    [Fact]
+    public void IsUserFacingApplication_RejectsProcessesWithoutAVisibleWindowTitle()
+    {
+        Assert.False(ApplicationDiscoveryService.IsUserFacingApplication(
+            "GameInputRedistService",
+            @"C:\Program Files\Microsoft GameInput\x64\GameInputRedistService.exe",
+            string.Empty));
+    }
+
+    [Fact]
+    public void IsLegacyBackgroundHelper_RecognizesOldPickerEntries()
+    {
+        Assert.True(ApplicationDiscoveryService.IsLegacyBackgroundHelper(new FocusGuard.Core.Models.ApplicationEntry
+        {
+            Name = "Microsoft Build Engine",
+            ExecutablePath = @"C:\Program Files\Microsoft Visual Studio\MSBuild.exe"
+        }));
+    }
 }

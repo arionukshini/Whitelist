@@ -17,7 +17,37 @@ public sealed class FocusGuardStore
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_db.Database.GetDbConnection().DataSource)!);
         await _db.Database.EnsureCreatedAsync();
+        await EnsureApplicationSourceColumnAsync();
         await CompleteExpiredSessionsAsync();
+    }
+
+    private async Task EnsureApplicationSourceColumnAsync()
+    {
+        await _db.Database.OpenConnectionAsync();
+        try
+        {
+            var connection = _db.Database.GetDbConnection();
+            await using var check = connection.CreateCommand();
+            check.CommandText = "PRAGMA table_info('Applications')";
+            await using var reader = await check.ExecuteReaderAsync();
+            var hasSource = false;
+            while (await reader.ReadAsync())
+            {
+                if (reader.GetString(1).Equals("Source", StringComparison.OrdinalIgnoreCase)) hasSource = true;
+            }
+
+            await reader.DisposeAsync();
+            if (!hasSource)
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = "ALTER TABLE Applications ADD COLUMN Source INTEGER NOT NULL DEFAULT 0";
+                await alter.ExecuteNonQueryAsync();
+            }
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
     }
 
     public Task<List<ApplicationEntry>> GetApplicationsAsync() =>
@@ -51,16 +81,20 @@ public sealed class FocusGuardStore
             .Include(x => x.Websites).ThenInclude(x => x.WebsiteRule)
             .FirstOrDefaultAsync(x => x.Status == FocusSessionStatus.Active);
 
-    public async Task<ApplicationEntry> AddApplicationAsync(string name, string executablePath)
+    public async Task<ApplicationEntry> AddApplicationAsync(string name, string executablePath, ApplicationSource source = ApplicationSource.UserSelected)
     {
         var path = Path.GetFullPath(executablePath);
-        var existing = await _db.Applications.FirstOrDefaultAsync(x => x.ExecutablePath == path);
+        var normalizedPath = path.Replace('/', '\\');
+        var existing = await _db.Applications.FirstOrDefaultAsync(x => x.ExecutablePath.ToLower() == normalizedPath.ToLower());
         if (existing is not null)
         {
+            existing.Source = source;
+            if (existing.IconPath is null) existing.IconPath = path;
+            await _db.SaveChangesAsync();
             return existing;
         }
 
-        var app = new ApplicationEntry { Name = name, ExecutablePath = path };
+        var app = new ApplicationEntry { Name = name, ExecutablePath = path, IconPath = path, Source = source };
         _db.Applications.Add(app);
         await _db.SaveChangesAsync();
         return app;
@@ -117,6 +151,32 @@ public sealed class FocusGuardStore
         profile.Applications.AddRange(applicationIds.Distinct().Select(id => new ProfileApplication { ApplicationEntryId = id }));
         profile.Websites.AddRange(websiteIds.Distinct().Select(id => new ProfileWebsite { WebsiteRuleId = id }));
         _db.Profiles.Add(profile);
+        await _db.SaveChangesAsync();
+        return profile;
+    }
+
+    public async Task<Profile> UpdateProfileAsync(int profileId, string name, IEnumerable<int> applicationIds, IEnumerable<int> websiteIds)
+    {
+        var profile = await _db.Profiles
+            .Include(x => x.Applications)
+            .Include(x => x.Websites)
+            .FirstAsync(x => x.Id == profileId);
+        profile.Name = name.Trim();
+        var desiredApplications = applicationIds.Distinct().ToHashSet();
+        var removedApplications = profile.Applications.Where(x => !desiredApplications.Contains(x.ApplicationEntryId)).ToList();
+        _db.RemoveRange(removedApplications);
+        foreach (var application in removedApplications) profile.Applications.Remove(application);
+        var existingApplicationIds = profile.Applications.Select(x => x.ApplicationEntryId).ToHashSet();
+        profile.Applications.AddRange(desiredApplications.Except(existingApplicationIds)
+            .Select(id => new ProfileApplication { ApplicationEntryId = id }));
+
+        var desiredWebsites = websiteIds.Distinct().ToHashSet();
+        var removedWebsites = profile.Websites.Where(x => !desiredWebsites.Contains(x.WebsiteRuleId)).ToList();
+        _db.RemoveRange(removedWebsites);
+        foreach (var website in removedWebsites) profile.Websites.Remove(website);
+        var existingWebsiteIds = profile.Websites.Select(x => x.WebsiteRuleId).ToHashSet();
+        profile.Websites.AddRange(desiredWebsites.Except(existingWebsiteIds)
+            .Select(id => new ProfileWebsite { WebsiteRuleId = id }));
         await _db.SaveChangesAsync();
         return profile;
     }

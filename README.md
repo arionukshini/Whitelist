@@ -1,91 +1,76 @@
-# FocusGuard
+# Whitelist Lock In
 
-FocusGuard is a local Windows focus app. Select the desktop apps you need,
-choose a timer, and start focus mode. Other visible third-party desktop apps
-are closed while the timer is active. Windows, drivers, services, Explorer,
-and browser processes are left alone.
+Whitelist Lock In is a Windows 10/11 focus utility for choosing desktop apps and websites to keep available during a timed focus session. It is local-first: configuration and session state are stored in SQLite on the PC.
 
-## What You Need
+## Use
 
-- Windows 10 or 11.
-- Visual Studio 2022 version 17.12 or newer with the **.NET desktop
-  development** workload, or the .NET 9 SDK for terminal builds.
-- The browser extension only when you want website blocking.
+1. Open **Focus** and choose **Find running apps** or **Browse .exe**.
+2. Search the app list and tick the desktop apps you want to keep available.
+3. Choose a session duration and select **Start focus**.
+4. Optionally open **Websites**, add sites you need, and tick them. During a session, the browser extension allows those domains and blocks other web page navigations.
+5. Closing the window hides the app in the notification area and keeps the session running. Choose **Exit and end focus** from the tray menu to end it and exit.
 
-## Use It
+Use **Saved setup** on the Focus screen to save the current app and website selections under a name. Choose that setup later to restore its selections. Starting a session from a saved setup records which setup was used.
 
-1. Open FocusGuard. The first screen is **Focus**.
-2. Choose **Find running apps** to add visible user apps such as Anki,
-   Obsidian, Spotify, or Discord. Windows components and background services
-   are automatically excluded.
-3. Tick the apps you want to keep available. Use **Remove** to clear anything
-   you do not want in the list.
-4. Set a duration and choose **Start focus**.
-5. Choose **End** at any time to stop focus mode.
+App discovery considers visible, titled desktop windows and excludes Windows components, background processes without a normal window, hardware utilities, and Whitelist Lock In itself. Browse can add a specific `.exe`. Duplicate paths are matched case-insensitively.
 
-The **Websites** screen is optional. Add and tick the websites you want to use
-during focus mode before you start a session.
+## Enforcement limits
 
-## Browser Blocking
+Windows does not provide a safe per-user API for an ordinary desktop app to guarantee a locked application whitelist. This implementation is best-effort user-mode enforcement: it checks visible top-level processes every three seconds and closes recognized, non-protected apps outside the selected list. It does not prevent a process from starting between checks, does not enforce on hidden/background processes, and a user with control of the PC can stop the app. Windows system locations, known critical processes, and Whitelist Lock In itself are protected from termination. Browsers are handled like other desktop apps: include the browser in the whitelist if it should stay open and its website rules should apply. Do not treat this as a security boundary or parental-control tool.
 
-Yes. The extension is required for website blocking in Chrome, Edge, Brave,
-or other Chromium browsers. The desktop app alone controls desktop apps, but
-does not inspect or block individual browser tabs.
+The app stores an active session end time and allowed apps/sites in SQLite, resumes the session when the app next starts, and keeps running when its main window is closed. If the process is forcibly stopped, desktop enforcement is suspended until it is relaunched. Session expiry is still recorded from the saved end time. While the desktop is running, an ended session clears browser rules on the next extension sync (normally within 30 seconds). If the desktop is stopped unexpectedly, the extension retains its last rules until the original session expiry.
 
-To install the extension:
+## Website extension
 
-1. Keep FocusGuard running.
-2. Open your browser's extensions page.
-3. Enable Developer Mode.
-4. Choose **Load unpacked**.
-5. Select `E:\Other\Coding\Whitelist\src\FocusGuard.BrowserExtension`.
+The included Manifest V3 extension uses Chrome's dynamic `declarativeNetRequest` rules. It applies rules to top-level HTTP/HTTPS page navigations, allows the selected domain (and subdomains when enabled), and redirects disallowed pages to the bundled focus page. It does not inspect browsing history or collect page contents. Dynamic rules survive browser restarts; when the desktop is unreachable, the last valid rules remain until the saved session end. [Chrome documents that dynamic DNR rules persist across browser sessions.](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest)
 
-That folder contains `manifest.json`, which is the file the browser needs when
-you use **Load unpacked**.
+The app's loopback API listens only on `127.0.0.1:47837`, accepts the pinned extension origin, returns the current active session, and exposes a connection indicator in the sidebar. The desktop database remains the source of truth. The bridge uses loopback HTTP rather than Native Messaging; no Native Messaging host or browser registry entries are installed.
 
-The extension blocks websites during an active focus session except for the
-websites ticked in FocusGuard. Browser processes are intentionally not closed,
-so the extension can do its job.
+To install the unpacked extension:
 
-## Visual Studio 2022
+1. Open **Websites** and select **Open extension folder**.
+2. In Chrome open `chrome://extensions`; in Edge open `edge://extensions`.
+3. Turn on **Developer mode**, choose **Load unpacked**, and select the opened `BrowserExtension` folder.
+4. Return to Whitelist Lock In. The indicator changes to **Browser connected** after the extension's next sync (normally within 30 seconds).
 
-Use the regular solution file, not the `.slnx` file:
+The folder is included beside the executable in the release. A store listing is not part of this repository, so the installer cannot silently install a consumer browser extension. Browser policy based force installation is an administrator-managed enterprise mechanism that requires a published/hosted extension and policy configuration; the supported user flow here is the explicit unpacked install. See [Chrome distribution options](https://developer.chrome.com/docs/extensions/how-to/distribute) and [Microsoft Edge extension management](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-manage-extensions-ref-guide).
 
-1. Open Visual Studio 2022.
-2. Choose **Open a project or solution**.
-3. Open [FocusGuard.sln](E:\Other\Coding\Whitelist\FocusGuard.sln).
-4. In Solution Explorer, right-click `FocusGuard.UI` and choose **Set as Startup Project**.
-5. Press `F5` to debug, or `Ctrl+F5` to run.
+Website blocking covers top-level navigation in Chromium browsers where the extension is installed and enabled. It cannot block other browsers, non-HTTP(S) browser pages, or traffic from other desktop applications. Each saved setup contains one website allowlist alongside its app selection; separate website-only lists, blocklist mode, page-level exceptions, and schedules are not implemented.
 
-Visual Studio 2022 is sufficient. You do not need Visual Studio 2026 for this
-project.
+## Architecture
 
-## Build From Terminal
+- `FocusGuard.Core` — domain models and domain matching.
+- `FocusGuard.Infrastructure` — SQLite persistence and Windows app discovery.
+- `FocusGuard.Enforcement` — visible process enforcement and loopback browser session API.
+- `FocusGuard.UI` — WPF desktop interface, session countdown, and tray lifecycle.
+- `FocusGuard.BrowserExtension` — Manifest V3 network rules and blocked page.
+- `tests/FocusGuard.Tests` — domain and discovery checks, legacy database migration, duplicate app paths, saved profile edits, active-session recovery, and loopback API tests.
+- `tests/extension-tests.mjs` — rule generation, desktop disconnect, rule expiry, and session-clear tests for the extension worker.
+
+The historical `%LOCALAPPDATA%\FocusGuard\focusguard.db` path is intentionally retained to preserve existing local data.
+
+## Build, test, and run
+
+Prerequisites: .NET 9 SDK (the repository targets .NET 9), Node.js 18 or newer for extension tests, Windows 10/11 x64 for the WPF app, and Inno Setup 6 to produce the installer.
 
 ```powershell
+dotnet restore .\FocusGuard.sln
 dotnet build .\FocusGuard.sln
 dotnet test .\FocusGuard.sln
+node --test .\tests\extension-tests.mjs
 dotnet run --project .\src\FocusGuard.UI\FocusGuard.UI.csproj
 ```
 
-## Build a Standalone EXE
+To publish the self-contained executable and compile the installer:
 
 ```powershell
-dotnet publish .\src\FocusGuard.UI\FocusGuard.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o .\artifacts\publish\FocusGuard-win-x64
+pwsh -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-Run the published program here:
+Outputs:
 
-```powershell
-.\artifacts\publish\FocusGuard-win-x64\FocusGuard.UI.exe
-```
+- `artifacts\publish\win-x64\WhitelistLockIn.exe` — single-file, self-contained x64 executable.
+- `artifacts\publish\win-x64\BrowserExtension\` — unpacked browser extension.
+- `artifacts\installer\WhitelistLockIn-Setup-1.0.0-x64.exe` — per-user installer.
 
-## Local Data
-
-FocusGuard stores its local database at:
-
-```text
-%LOCALAPPDATA%\FocusGuard\focusguard.db
-```
-
-It has no login, cloud sync, or account setup.
+The installer creates Start Menu and optional desktop shortcuts. Uninstall removes the installed application and shortcuts; it intentionally preserves `%LOCALAPPDATA%\FocusGuard\focusguard.db`. The release is unsigned; clean-machine SmartScreen behavior, installation, and uninstall should be verified before public distribution.

@@ -17,6 +17,7 @@ public sealed class FocusGuardDbContext(DbContextOptions<FocusGuardDbContext> op
             entity.HasIndex(x => x.ExecutablePath).IsUnique();
             entity.Property(x => x.Name).HasMaxLength(200);
             entity.Property(x => x.ExecutablePath).HasMaxLength(1000);
+            entity.Property(x => x.Source).HasDefaultValue(ApplicationSource.Legacy);
         });
 
         modelBuilder.Entity<WebsiteRule>(entity =>

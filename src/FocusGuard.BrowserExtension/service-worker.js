@@ -1,72 +1,94 @@
 const sessionEndpoint = "http://127.0.0.1:47837/api/session";
+const blockRuleId = 1;
+const allowRuleIdBase = 100;
+const syncAlarm = "desktop-session-sync";
+const expiryAlarm = "focus-session-expiry";
+let syncInFlight;
 
-async function getSession() {
+async function clearExpiredRules() {
+  const { sessionEndTime } = await chrome.storage.local.get("sessionEndTime");
+  if (!sessionEndTime) return;
+  const endTime = Date.parse(sessionEndTime);
+  if (!Number.isFinite(endTime)) {
+    await chrome.storage.local.remove("sessionEndTime");
+    await chrome.alarms.clear(expiryAlarm);
+    return;
+  }
+  if (endTime <= Date.now()) {
+    const current = await chrome.declarativeNetRequest.getDynamicRules();
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: current.map(rule => rule.id) });
+    await chrome.storage.local.remove("sessionEndTime");
+    await chrome.alarms.clear(expiryAlarm);
+  } else {
+    chrome.alarms.create(expiryAlarm, { when: endTime });
+  }
+}
+
+async function syncRules() {
   try {
-    const response = await fetch(sessionEndpoint, { cache: "no-store" });
-    if (!response.ok) {
-      return { active: false, websites: [] };
+    const response = await fetch(sessionEndpoint, { cache: "no-store", signal: AbortSignal.timeout(4000) });
+    if (!response.ok) throw new Error(`Desktop returned ${response.status}`);
+    const session = await response.json();
+    const rules = [];
+
+    if (session.active && session.endTime && Date.parse(session.endTime) > Date.now()) {
+      rules.push({
+        id: blockRuleId,
+        priority: 1,
+        action: { type: "redirect", redirect: { extensionPath: "/blocked.html" } },
+        condition: {
+          regexFilter: "^https?://",
+          resourceTypes: ["main_frame"]
+        }
+      });
+
+      const websites = [...new Map((session.websites || []).map(site => [
+        String(site.domain || "").toLowerCase().replace(/^www\./, "").replace(/\.$/, ""),
+        site
+      ])).values()].filter(site => /^[a-z0-9.-]+$/.test(site.domain) && !site.domain.includes(".."));
+
+      if (websites.length > 4000) throw new Error("The allowlist is too large to synchronize.");
+      websites.forEach((site, index) => rules.push({
+        id: allowRuleIdBase + index,
+        priority: 2,
+        action: { type: "allow" },
+        condition: {
+          regexFilter: `^https?://${site.includeSubdomains ? "(?:[^/:?#]+\\.)?" : ""}${site.domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([/:?#]|$)`,
+          resourceTypes: ["main_frame"]
+        }
+      }));
     }
 
-    return await response.json();
-  } catch {
-    return { active: false, websites: [] };
+    const current = await chrome.declarativeNetRequest.getDynamicRules();
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: current.map(rule => rule.id),
+      addRules: rules
+    });
+    if (session.active && session.endTime && Date.parse(session.endTime) > Date.now()) {
+      await chrome.storage.local.set({ sessionEndTime: session.endTime });
+      chrome.alarms.create(expiryAlarm, { when: Date.parse(session.endTime) });
+    } else {
+      await chrome.storage.local.remove("sessionEndTime");
+      await chrome.alarms.clear(expiryAlarm);
+    }
+    await chrome.storage.local.set({ connection: { connected: true, checkedAt: Date.now(), active: !!session.active } });
+  } catch (error) {
+    // Keep the last successfully installed rules when the desktop is offline.
+    await clearExpiredRules();
+    await chrome.storage.local.set({ connection: { connected: false, checkedAt: Date.now(), error: String(error) } });
   }
 }
 
-function normalizeHost(hostname) {
-  let host = hostname.toLowerCase().replace(/\.$/, "");
-  if (host.startsWith("www.")) {
-    host = host.slice(4);
-  }
-  return host;
+function requestSync() {
+  if (!syncInFlight) syncInFlight = syncRules().finally(() => { syncInFlight = undefined; });
+  return syncInFlight;
 }
 
-function isAllowed(hostname, rule) {
-  const host = normalizeHost(hostname);
-  const domain = normalizeHost(rule.domain);
-  if (host === domain) {
-    return true;
-  }
-
-  return rule.includeSubdomains && host.endsWith("." + domain);
-}
-
-async function evaluateTab(tabId, url) {
-  if (!url || url.startsWith("chrome:") || url.startsWith("edge:") || url.startsWith("brave:")) {
-    return;
-  }
-
-  const parsed = new URL(url);
-  if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") {
-    return;
-  }
-
-  const session = await getSession();
-  if (!session.active) {
-    return;
-  }
-
-  const allowed = (session.websites || []).some(rule => isAllowed(parsed.hostname, rule));
-  if (allowed) {
-    return;
-  }
-
-  const blockedUrl = chrome.runtime.getURL("blocked.html") +
-    `?domain=${encodeURIComponent(parsed.hostname)}` +
-    `&session=${encodeURIComponent(session.name || "Focus Session")}` +
-    `&end=${encodeURIComponent(session.endTime || "")}`;
-  await chrome.tabs.update(tabId, { url: blockedUrl });
-}
-
-chrome.webNavigation.onCommitted.addListener(details => {
-  if (details.frameId === 0) {
-    evaluateTab(details.tabId, details.url);
-  }
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create(syncAlarm, { periodInMinutes: 0.5 });
 });
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === "complete" && tab.url) {
-    evaluateTab(tabId, tab.url);
-  }
+chrome.runtime.onStartup.addListener(requestSync);
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === syncAlarm || alarm.name === expiryAlarm) requestSync();
 });
-
+requestSync();

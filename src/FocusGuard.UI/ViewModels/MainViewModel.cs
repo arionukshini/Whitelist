@@ -6,6 +6,8 @@ using Microsoft.Win32;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows.Threading;
+using System.Windows.Data;
+using System.ComponentModel;
 
 namespace FocusGuard.UI.ViewModels;
 
@@ -14,28 +16,54 @@ public sealed class MainViewModel : ObservableObject
     private readonly FocusGuardStore _store;
     private readonly ApplicationDiscoveryService _applicationDiscovery;
     private readonly ProcessEnforcementService _enforcement;
+    private readonly WebsiteAllowlistServer _websiteServer;
     private readonly DispatcherTimer _timer;
     private string _newWebsite = string.Empty;
     private int _durationMinutes = 60;
     private FocusSession? _activeSession;
+    private Profile? _selectedProfile;
     private string _selectedSection = "Focus";
+    private string _applicationSearch = string.Empty;
+    private string _profileName = string.Empty;
     private string _noticeText = "Choose the apps you need, then start focus mode.";
+    private string _themePreference = "System";
 
-    public MainViewModel(FocusGuardStore store, ApplicationDiscoveryService applicationDiscovery, ProcessEnforcementService enforcement)
+    public MainViewModel(FocusGuardStore store, ApplicationDiscoveryService applicationDiscovery, ProcessEnforcementService enforcement, WebsiteAllowlistServer websiteServer)
     {
         _store = store;
         _applicationDiscovery = applicationDiscovery;
         _enforcement = enforcement;
+        _websiteServer = websiteServer;
+        ApplicationView = CollectionViewSource.GetDefaultView(SelectedApplications);
+        ApplicationView.Filter = value => value is SelectableItem<ApplicationEntry> app &&
+            (string.IsNullOrWhiteSpace(_applicationSearch)
+             || app.DisplayName.Contains(_applicationSearch, StringComparison.OrdinalIgnoreCase)
+             || app.Detail.Contains(_applicationSearch, StringComparison.OrdinalIgnoreCase));
         AddApplicationCommand = new RelayCommand(_ => AddApplicationAsync());
         AddRunningApplicationsCommand = new RelayCommand(_ => AddRunningApplicationsAsync());
         RemoveApplicationCommand = new RelayCommand(item => RemoveApplicationAsync(item as SelectableItem<ApplicationEntry>));
         AddWebsiteCommand = new RelayCommand(_ => AddWebsiteAsync());
         RemoveWebsiteCommand = new RelayCommand(item => RemoveWebsiteAsync(item as SelectableItem<WebsiteRule>));
-        StartSessionCommand = new RelayCommand(_ => StartSessionAsync());
-        EndSessionCommand = new RelayCommand(_ => EndSessionAsync());
+        StartSessionCommand = new RelayCommand(_ => StartSessionAsync(), _ => _activeSession is null);
+        EndSessionCommand = new RelayCommand(_ => EndSessionAsync(), _ => _activeSession is not null);
+        SaveConfigurationCommand = new RelayCommand(_ => SaveConfigurationAsync());
         NavigateCommand = new RelayCommand(parameter =>
         {
             SelectedSection = parameter?.ToString() ?? "Focus";
+            return Task.CompletedTask;
+        });
+        OpenExtensionFolderCommand = new RelayCommand(_ =>
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "BrowserExtension");
+            if (Directory.Exists(path))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+                NoticeText = "In your browser, enable Developer mode and choose Load unpacked, then select the opened folder.";
+            }
+            else
+            {
+                NoticeText = "The browser extension files are missing from this installation.";
+            }
             return Task.CompletedTask;
         });
 
@@ -44,6 +72,8 @@ public sealed class MainViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(RemainingText));
             OnPropertyChanged(nameof(SessionStatusText));
+            OnPropertyChanged(nameof(ExtensionStatusText));
+            OnPropertyChanged(nameof(IsExtensionConnected));
             if (_activeSession is not null && _activeSession.EndTime <= DateTimeOffset.Now)
             {
                 await RefreshAsync();
@@ -52,7 +82,9 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public ObservableCollection<SelectableItem<ApplicationEntry>> SelectedApplications { get; } = [];
+    public ICollectionView ApplicationView { get; }
     public ObservableCollection<SelectableItem<WebsiteRule>> SelectedWebsites { get; } = [];
+    public ObservableCollection<Profile> Profiles { get; } = [];
 
     public RelayCommand AddApplicationCommand { get; }
     public RelayCommand AddRunningApplicationsCommand { get; }
@@ -62,8 +94,23 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand StartSessionCommand { get; }
     public RelayCommand EndSessionCommand { get; }
     public RelayCommand NavigateCommand { get; }
+    public RelayCommand OpenExtensionFolderCommand { get; }
+    public RelayCommand SaveConfigurationCommand { get; }
 
     public IReadOnlyList<string> Sections { get; } = ["Focus", "Websites", "Settings"];
+    public IReadOnlyList<int> DurationPresets { get; } = [15, 25, 45, 60, 90, 120];
+    public IReadOnlyList<string> ThemeOptions { get; } = ["System", "Light", "Dark"];
+
+    public string ThemePreference
+    {
+        get => _themePreference;
+        set
+        {
+            if (value is not ("System" or "Light" or "Dark") || !SetProperty(ref _themePreference, value)) return;
+            App.ApplyTheme(value);
+            _ = App.SaveThemePreferenceAsync(value);
+        }
+    }
 
     public string SelectedSection
     {
@@ -89,6 +136,34 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _newWebsite, value);
     }
 
+    public string ApplicationSearch
+    {
+        get => _applicationSearch;
+        set
+        {
+            if (SetProperty(ref _applicationSearch, value)) ApplicationView.Refresh();
+        }
+    }
+
+    public string ProfileName
+    {
+        get => _profileName;
+        set => SetProperty(ref _profileName, value);
+    }
+
+    public Profile? SelectedProfile
+    {
+        get => _selectedProfile;
+        set
+        {
+            if (SetProperty(ref _selectedProfile, value))
+            {
+                ProfileName = value?.Name ?? string.Empty;
+                if (value is not null) ApplyProfileSelection(value);
+            }
+        }
+    }
+
     public int DurationMinutes
     {
         get => _durationMinutes;
@@ -102,10 +177,15 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public string ActiveSessionName => _activeSession is null ? "Ready to focus" : "Focus mode is on";
+    public bool IsSessionActive => _activeSession is not null;
     public string SessionStatusText => _activeSession is null
-        ? "Only selected desktop apps stay available during focus mode."
-        : $"Ends at {_activeSession.EndTime.LocalDateTime:t}";
+        ? "Best-effort checks keep unselected visible apps closed."
+        : $"Best-effort app checks · ends at {_activeSession.EndTime.LocalDateTime:t}";
     public string DatabaseLocation => DatabasePaths.DefaultDatabasePath;
+    public string ExtensionStatusText => !_websiteServer.IsAvailable
+        ? "Browser bridge unavailable (port 47837 is busy)"
+        : _websiteServer.IsExtensionConnected ? "Browser connected" : "Browser extension not detected";
+    public bool IsExtensionConnected => _websiteServer.IsExtensionConnected;
 
     public string RemainingText
     {
@@ -131,12 +211,20 @@ public sealed class MainViewModel : ObservableObject
     private async Task RefreshAsync()
     {
         await _store.CompleteExpiredSessionsAsync();
-        var applications = (await _store.GetApplicationsAsync())
-            .Where(app => ApplicationDiscoveryService.IsUserFacingApplication(app.Name, app.ExecutablePath));
+        var selectedProfileId = _selectedProfile?.Id;
+        var savedApplications = await _store.GetApplicationsAsync();
+        var applications = _applicationDiscovery.FilterUserFacingApplications(
+            savedApplications.Where(app => app.Source != ApplicationSource.Legacy || !ApplicationDiscoveryService.IsLegacyBackgroundHelper(app)));
         ReplaceSelectable(SelectedApplications, applications, app => app.Name, app => app.ExecutablePath);
         ReplaceSelectable(SelectedWebsites, await _store.GetWebsitesAsync(), site => site.Domain, site => "Includes subdomains");
 
+        Profiles.Clear();
+        foreach (var profile in await _store.GetProfilesAsync()) Profiles.Add(profile);
+
         _activeSession = await _store.GetActiveSessionAsync();
+        _selectedProfile = Profiles.FirstOrDefault(profile => profile.Id == (_activeSession?.ProfileId ?? selectedProfileId));
+        OnPropertyChanged(nameof(SelectedProfile));
+        ProfileName = _selectedProfile?.Name ?? string.Empty;
         if (_activeSession is not null)
         {
             ApplySessionSelection(_activeSession);
@@ -145,16 +233,20 @@ public sealed class MainViewModel : ObservableObject
         else
         {
             _enforcement.Stop();
+            if (_selectedProfile is not null) ApplyProfileSelection(_selectedProfile);
         }
 
         OnPropertyChanged(nameof(ActiveSessionName));
+        OnPropertyChanged(nameof(IsSessionActive));
         OnPropertyChanged(nameof(SessionStatusText));
         OnPropertyChanged(nameof(RemainingText));
+        StartSessionCommand.RaiseCanExecuteChanged();
+        EndSessionCommand.RaiseCanExecuteChanged();
     }
 
     private async Task AddApplicationAsync()
     {
-        var dialog = new OpenFileDialog
+        var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Filter = "Applications (*.exe)|*.exe",
             CheckFileExists = true,
@@ -163,7 +255,7 @@ public sealed class MainViewModel : ObservableObject
 
         if (dialog.ShowDialog() == true)
         {
-            await _store.AddApplicationAsync(Path.GetFileNameWithoutExtension(dialog.FileName), dialog.FileName);
+            await _store.AddApplicationAsync(ApplicationDiscoveryService.GetFriendlyName(dialog.FileName), dialog.FileName);
             NoticeText = "App added. Tick it to allow it during focus mode.";
             await RefreshAsync();
         }
@@ -172,14 +264,16 @@ public sealed class MainViewModel : ObservableObject
     private async Task AddRunningApplicationsAsync()
     {
         var apps = _applicationDiscovery.DiscoverRunningApplications().Take(40).ToList();
+        var before = (await _store.GetApplicationsAsync()).Select(app => app.ExecutablePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var app in apps)
         {
-            await _store.AddApplicationAsync(app.Name, app.ExecutablePath);
+            await _store.AddApplicationAsync(app.Name, app.ExecutablePath, ApplicationSource.Discovered);
         }
 
+        var added = apps.Count(app => !before.Contains(app.ExecutablePath));
         NoticeText = apps.Count == 0
             ? "No visible user apps were found. Use Add app to choose an .exe."
-            : $"Added {apps.Count} visible user app(s). Tick the ones you need.";
+            : added == 0 ? "Your visible apps are already in the list." : $"Added {added} visible app(s). Tick the ones you need.";
         await RefreshAsync();
     }
 
@@ -238,7 +332,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         await _store.StartSessionAsync(
-            profileId: null,
+            profileId: _selectedProfile?.Id,
             name: "Focus mode",
             TimeSpan.FromMinutes(DurationMinutes),
             selectedApplicationIds,
@@ -267,6 +361,39 @@ public sealed class MainViewModel : ObservableObject
         {
             site.IsSelected = websiteIds.Contains(site.Value.Id);
         }
+    }
+
+    private void ApplyProfileSelection(Profile profile)
+    {
+        var applicationIds = profile.Applications.Select(x => x.ApplicationEntryId).ToHashSet();
+        var websiteIds = profile.Websites.Select(x => x.WebsiteRuleId).ToHashSet();
+        foreach (var app in SelectedApplications) app.IsSelected = applicationIds.Contains(app.Value.Id);
+        foreach (var site in SelectedWebsites) site.IsSelected = websiteIds.Contains(site.Value.Id);
+    }
+
+    private async Task SaveConfigurationAsync()
+    {
+        var name = ProfileName.Trim();
+        if (name.Length == 0)
+        {
+            NoticeText = "Give this configuration a name before saving.";
+            return;
+        }
+
+        var duplicate = Profiles.FirstOrDefault(profile => profile.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (duplicate is not null && duplicate.Id != _selectedProfile?.Id)
+        {
+            NoticeText = "A configuration already has that name. Select it before saving changes.";
+            return;
+        }
+
+        var appIds = SelectedApplications.Where(x => x.IsSelected).Select(x => x.Value.Id).ToArray();
+        var websiteIds = SelectedWebsites.Where(x => x.IsSelected).Select(x => x.Value.Id).ToArray();
+        _selectedProfile = _selectedProfile is null
+            ? await _store.CreateProfileAsync(name, appIds, websiteIds)
+            : await _store.UpdateProfileAsync(_selectedProfile.Id, name, appIds, websiteIds);
+        NoticeText = $"Saved configuration: {name}.";
+        await RefreshAsync();
     }
 
     private static void ReplaceSelectable<T>(ObservableCollection<SelectableItem<T>> target, IEnumerable<T> values, Func<T, string> name, Func<T, string> detail)
