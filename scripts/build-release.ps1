@@ -25,8 +25,18 @@ dotnet publish (Join-Path $repoRoot "src\FocusGuard.UI\FocusGuard.UI.csproj") `
     -p:DebugType=None -p:DebugSymbols=false -o $publishDir
 if ($LASTEXITCODE -ne 0) { throw "Release publish failed." }
 
+$nativeHostDir = Join-Path $publishDir "NativeHost"
+New-Item -ItemType Directory -Force -Path $nativeHostDir | Out-Null
+Write-Host "Publishing the browser native messaging host..."
+dotnet publish (Join-Path $repoRoot "src\FocusGuard.NativeHost\FocusGuard.NativeHost.csproj") `
+    -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:DebugType=None -p:DebugSymbols=false -o $nativeHostDir
+if ($LASTEXITCODE -ne 0) { throw "Native messaging host publish failed." }
+
 if (-not (Test-Path (Join-Path $publishDir "WhitelistLockIn.exe"))) { throw "Published executable is missing." }
 if (-not (Test-Path (Join-Path $publishDir "BrowserExtension\manifest.json"))) { throw "Published browser extension is missing." }
+if (-not (Test-Path (Join-Path $nativeHostDir "WhitelistLockIn.NativeHost.exe"))) { throw "Published native messaging host is missing." }
 if (-not (Test-Path $innoCompiler)) { throw "Inno Setup 6 compiler was not found at $innoCompiler." }
 
 New-Item -ItemType Directory -Force -Path $installerDir | Out-Null

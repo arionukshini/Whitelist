@@ -5,11 +5,27 @@ import vm from "node:vm";
 
 const workerSource = await readFile(new URL("../src/FocusGuard.BrowserExtension/service-worker.js", import.meta.url), "utf8");
 
-function createHarness(initialSession) {
-  const state = { rules: [], data: {}, session: initialSession, online: true };
+function createHarness(initialSession, { nativeEnabled = false } = {}) {
+  const state = { rules: [], data: {}, session: initialSession, online: true, nativeEnabled, fetchCount: 0 };
   const event = () => ({ addListener() {} });
   const chrome = {
-    runtime: { onInstalled: event(), onStartup: event() },
+    runtime: {
+      onInstalled: event(), onStartup: event(), onMessage: event(),
+      connectNative: () => {
+        if (!state.nativeEnabled) throw new Error("Specified native messaging host not found.");
+        const messageListeners = [];
+        const disconnectListeners = [];
+        return {
+          onMessage: { addListener: listener => messageListeners.push(listener) },
+          onDisconnect: { addListener: listener => disconnectListeners.push(listener) },
+          postMessage: message => {
+            assert.equal(message.type, "get-session");
+            queueMicrotask(() => messageListeners.forEach(listener => listener(state.session)));
+          },
+          disconnect: () => disconnectListeners.forEach(listener => listener())
+        };
+      }
+    },
     alarms: { onAlarm: event(), create: async () => {}, clear: async () => {} },
     declarativeNetRequest: {
       getDynamicRules: async () => state.rules,
@@ -27,7 +43,10 @@ function createHarness(initialSession) {
     chrome,
     AbortSignal,
     Date,
+    setTimeout,
+    clearTimeout,
     fetch: async () => {
+      state.fetchCount++;
       if (!state.online) throw new Error("offline");
       return { ok: true, json: async () => state.session };
     }
@@ -56,6 +75,21 @@ test("active session installs a catch-all block plus domain-boundary allow rules
   assert.doesNotMatch(reddit.condition.regexFilter, /\(\?:/);
   assert.equal(state.data.sessionEndTime, endTime);
   assert.equal(state.data.connection.connected, true);
+});
+
+test("installed native host synchronizes the session without loopback", async () => {
+  const endTime = new Date(Date.now() + 60_000).toISOString();
+  const { state, firstSync } = createHarness({
+    active: true,
+    endTime,
+    websites: [{ domain: "wikipedia.org", includeSubdomains: true }]
+  }, { nativeEnabled: true });
+  await firstSync;
+
+  assert.equal(state.rules.length, 2);
+  assert.equal(state.data.connection.connected, true);
+  assert.equal(state.data.connection.transport, "native");
+  assert.equal(state.fetchCount, 0);
 });
 
 test("desktop disconnect keeps the last valid rules", async () => {

@@ -35,9 +35,14 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[Registry]
+Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\com.whitelistlockin.host"; ValueType: string; ValueName: ""; ValueData: "{app}\NativeMessagingHost.json"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.whitelistlockin.host"; ValueType: string; ValueName: ""; ValueData: "{app}\NativeMessagingHost.json"; Flags: uninsdeletekey
+
 [Icons]
 Name: "{group}\Whitelist Lock In"; Filename: "{app}\WhitelistLockIn.exe"
 Name: "{autodesktop}\Whitelist Lock In"; Filename: "{app}\WhitelistLockIn.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\WhitelistLockIn.exe"; Parameters: "--register-native-host"; StatusMsg: "Registering browser integration..."; Flags: runhidden waituntilterminated
 Filename: "{app}\WhitelistLockIn.exe"; Description: "Launch Whitelist Lock In"; Flags: postinstall nowait skipifsilent

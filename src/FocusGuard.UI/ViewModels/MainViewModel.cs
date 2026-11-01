@@ -27,10 +27,12 @@ public sealed class MainViewModel : ObservableObject
     private string _profileName = string.Empty;
     private string _noticeText = "Choose the apps you need, then start focus mode.";
     private string _themePreference = "System";
+    private bool _preventEarlyEnd;
 
     public MainViewModel(FocusGuardStore store, ApplicationDiscoveryService applicationDiscovery, ProcessEnforcementService enforcement, WebsiteAllowlistServer websiteServer)
     {
         _themePreference = App.ThemePreference;
+        _preventEarlyEnd = App.PreventEarlyEnd;
         _store = store;
         _applicationDiscovery = applicationDiscovery;
         _enforcement = enforcement;
@@ -46,7 +48,7 @@ public sealed class MainViewModel : ObservableObject
         AddWebsiteCommand = new RelayCommand(_ => AddWebsiteAsync());
         RemoveWebsiteCommand = new RelayCommand(item => RemoveWebsiteAsync(item as SelectableItem<WebsiteRule>));
         StartSessionCommand = new RelayCommand(_ => StartSessionAsync(), _ => _activeSession is null);
-        EndSessionCommand = new RelayCommand(_ => EndSessionAsync(), _ => _activeSession is not null);
+        EndSessionCommand = new RelayCommand(_ => EndSessionAsync(), _ => _activeSession is not null && !App.PreventEarlyEnd);
         SaveConfigurationCommand = new RelayCommand(_ => SaveConfigurationAsync());
         NavigateCommand = new RelayCommand(parameter =>
         {
@@ -99,7 +101,6 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand SaveConfigurationCommand { get; }
 
     public IReadOnlyList<string> Sections { get; } = ["Focus", "Websites", "Settings"];
-    public IReadOnlyList<int> DurationPresets { get; } = [15, 25, 45, 60, 90, 120];
     public IReadOnlyList<string> ThemeOptions { get; } = ["System", "Light", "Dark"];
 
     public string ThemePreference
@@ -109,9 +110,22 @@ public sealed class MainViewModel : ObservableObject
         {
             if (value is not ("System" or "Light" or "Dark") || !SetProperty(ref _themePreference, value)) return;
             App.ApplyTheme(value);
-            _ = App.SaveThemePreferenceAsync(value);
+            _ = App.SavePreferencesAsync();
         }
     }
+
+    public bool PreventEarlyEnd
+    {
+        get => _preventEarlyEnd;
+        set
+        {
+            if (IsSessionActive || !SetProperty(ref _preventEarlyEnd, value)) return;
+            App.SetPreventEarlyEnd(value);
+            EndSessionCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool CanChangeSessionLock => !IsSessionActive;
 
     public string SelectedSection
     {
@@ -185,7 +199,7 @@ public sealed class MainViewModel : ObservableObject
     public string DatabaseLocation => DatabasePaths.DefaultDatabasePath;
     public string ExtensionStatusText => !_websiteServer.IsAvailable
         ? "Browser bridge unavailable (port 47837 is busy)"
-        : _websiteServer.IsExtensionConnected ? "Browser connected" : "Browser extension not detected";
+        : _websiteServer.IsExtensionConnected ? "Browser connected" : "Waiting for extension connection";
     public bool IsExtensionConnected => _websiteServer.IsExtensionConnected;
 
     public string RemainingText
@@ -239,6 +253,7 @@ public sealed class MainViewModel : ObservableObject
 
         OnPropertyChanged(nameof(ActiveSessionName));
         OnPropertyChanged(nameof(IsSessionActive));
+        OnPropertyChanged(nameof(CanChangeSessionLock));
         OnPropertyChanged(nameof(SessionStatusText));
         OnPropertyChanged(nameof(RemainingText));
         StartSessionCommand.RaiseCanExecuteChanged();
@@ -344,6 +359,11 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task EndSessionAsync()
     {
+        if (App.PreventEarlyEnd)
+        {
+            NoticeText = "Early ending is locked in Settings for this session.";
+            return;
+        }
         await _store.EndActiveSessionAsync();
         NoticeText = "Focus mode ended.";
         await RefreshAsync();

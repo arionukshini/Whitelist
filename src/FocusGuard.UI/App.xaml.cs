@@ -14,9 +14,11 @@ namespace FocusGuard.UI;
 public partial class App : System.Windows.Application
 {
     private static readonly string PreferencesPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FocusGuard", "preferences.json");
-    private static ResourceDictionary? _activeTheme;
+    private static readonly SemaphoreSlim PreferencesGate = new(1, 1);
     private static string _themePreference = "System";
+    private static bool _preventEarlyEnd;
     public static string ThemePreference => _themePreference;
+    public static bool PreventEarlyEnd => _preventEarlyEnd;
     public static event Action<bool>? ThemeChanged;
     public static bool IsDarkTheme => Current.Resources["BgBrush"] is System.Windows.Media.SolidColorBrush brush && brush.Color.R < 128;
     private ServiceProvider? _serviceProvider;
@@ -31,21 +33,28 @@ public partial class App : System.Windows.Application
         var uri = new Uri(dark ? "Themes/Dark.xaml" : "Themes/Light.xaml", UriKind.Relative);
         var next = new ResourceDictionary { Source = uri };
         var dictionaries = Current.Resources.MergedDictionaries;
-        if (_activeTheme is not null) dictionaries.Remove(_activeTheme);
-        dictionaries.Insert(0, next);
-        _activeTheme = next;
+        dictionaries.Clear();
+        dictionaries.Add(next);
         ThemeChanged?.Invoke(dark);
     }
 
-    public static async Task SaveThemePreferenceAsync(string preference)
+    public static void SetPreventEarlyEnd(bool prevent)
     {
+        _preventEarlyEnd = prevent;
+        _ = SavePreferencesAsync();
+    }
+
+    public static async Task SavePreferencesAsync()
+    {
+        await PreferencesGate.WaitAsync();
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(PreferencesPath)!);
-            await File.WriteAllTextAsync(PreferencesPath, JsonSerializer.Serialize(new { Theme = preference }));
+            await File.WriteAllTextAsync(PreferencesPath, JsonSerializer.Serialize(new { Theme = _themePreference, PreventEarlyEnd = _preventEarlyEnd }));
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+        finally { PreferencesGate.Release(); }
     }
 
     private static bool IsWindowsLightTheme()
@@ -58,24 +67,45 @@ public partial class App : System.Windows.Application
         catch { return false; }
     }
 
-    private static async Task<string> LoadThemePreferenceAsync()
+    private static async Task<(string Theme, bool PreventEarlyEnd)> LoadPreferencesAsync()
     {
         try
         {
-            if (!File.Exists(PreferencesPath)) return "System";
+            if (!File.Exists(PreferencesPath)) return ("System", false);
             using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(PreferencesPath));
-            var theme = doc.RootElement.GetProperty("Theme").GetString();
-            return theme is "Light" or "Dark" ? theme : "System";
+            var root = doc.RootElement;
+            var theme = root.TryGetProperty("Theme", out var themeElement) ? themeElement.GetString() : null;
+            var prevent = root.TryGetProperty("PreventEarlyEnd", out var preventElement) && preventElement.ValueKind == JsonValueKind.True;
+            return (theme is "Light" or "Dark" ? theme : "System", prevent);
         }
-        catch { return "System"; }
+        catch { return ("System", false); }
     }
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        ApplyTheme(await LoadThemePreferenceAsync());
+        if (e.Args.Contains("--register-native-host", StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                NativeMessagingRegistration.RegisterInstalledHost();
+                Shutdown(0);
+            }
+            catch (Exception exception)
+            {
+                System.Windows.MessageBox.Show($"Browser integration could not be registered: {exception.Message}", "Whitelist Lock In", MessageBoxButton.OK, MessageBoxImage.Error);
+                Shutdown(1);
+            }
+            return;
+        }
+
+        var preferences = await LoadPreferencesAsync();
+        _preventEarlyEnd = preferences.PreventEarlyEnd;
+        ApplyTheme(preferences.Theme);
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+        try { NativeMessagingRegistration.RegisterIfHostIsInstalled(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException) { }
 
         _singleInstance = new Mutex(true, "Local\\WhitelistLockIn", out var createdNew);
         if (!createdNew)

@@ -17,7 +17,7 @@ public sealed class WebsiteAllowlistServerTests
         services.AddDbContext<FocusGuardDbContext>(options => options.UseSqlite($"Data Source={databasePath};Pooling=False"));
         services.AddScoped<FocusGuardStore>();
         await using var provider = services.BuildServiceProvider();
-        var server = new WebsiteAllowlistServer(provider.GetRequiredService<IServiceScopeFactory>());
+        var server = new WebsiteAllowlistServer(provider.GetRequiredService<IServiceScopeFactory>(), port: 0);
 
         try
         {
@@ -27,7 +27,7 @@ public sealed class WebsiteAllowlistServerTests
             Assert.True(server.IsAvailable);
 
             using var client = new HttpClient();
-            using var trustedRequest = new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:47837/api/session");
+            using var trustedRequest = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{server.ListeningPort}/api/session");
             trustedRequest.Headers.TryAddWithoutValidation("Origin", $"chrome-extension://{WebsiteAllowlistServer.ExtensionId}");
             using var trustedResponse = await client.SendAsync(trustedRequest);
             Assert.Equal(HttpStatusCode.OK, trustedResponse.StatusCode);
@@ -35,7 +35,7 @@ public sealed class WebsiteAllowlistServerTests
             Assert.Contains("\"active\":false", await trustedResponse.Content.ReadAsStringAsync());
             Assert.True(server.IsExtensionConnected);
 
-            using var untrustedRequest = new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:47837/api/session");
+            using var untrustedRequest = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{server.ListeningPort}/api/session");
             untrustedRequest.Headers.TryAddWithoutValidation("Origin", "https://example.com");
             using var untrustedResponse = await client.SendAsync(untrustedRequest);
             Assert.Equal(HttpStatusCode.Forbidden, untrustedResponse.StatusCode);

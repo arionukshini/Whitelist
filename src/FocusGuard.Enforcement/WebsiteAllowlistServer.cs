@@ -13,19 +13,32 @@ public sealed class WebsiteAllowlistServer : IDisposable
     private const int Port = 47837;
     private const int MaximumHeaderBytes = 8192;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly TcpListener _listener = new(IPAddress.Loopback, Port);
+    private readonly TcpListener _listener;
     private CancellationTokenSource? _cancellation;
     private long _lastExtensionRequestUtcTicks;
     public bool IsAvailable { get; private set; }
+    public int ListeningPort { get; private set; }
 
-    public WebsiteAllowlistServer(IServiceScopeFactory scopeFactory) => _scopeFactory = scopeFactory;
+    public WebsiteAllowlistServer(IServiceScopeFactory scopeFactory, int port = Port)
+    {
+        _scopeFactory = scopeFactory;
+        _listener = new TcpListener(IPAddress.Loopback, port);
+    }
 
     public bool IsExtensionConnected
     {
         get
         {
             var ticks = Interlocked.Read(ref _lastExtensionRequestUtcTicks);
-            return ticks > 0 && DateTimeOffset.UtcNow.UtcTicks - ticks < TimeSpan.FromSeconds(90).Ticks;
+            if (ticks > 0 && DateTimeOffset.UtcNow.UtcTicks - ticks < TimeSpan.FromSeconds(90).Ticks) return true;
+            try
+            {
+                return File.Exists(DatabasePaths.DefaultExtensionHeartbeatPath)
+                    && DateTimeOffset.TryParse(File.ReadAllText(DatabasePaths.DefaultExtensionHeartbeatPath), out var lastSeen)
+                    && DateTimeOffset.UtcNow - lastSeen.ToUniversalTime() < TimeSpan.FromSeconds(90);
+            }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
         }
     }
 
@@ -35,6 +48,7 @@ public sealed class WebsiteAllowlistServer : IDisposable
         try
         {
             _listener.Start(8);
+            ListeningPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
             _cancellation = new CancellationTokenSource();
             IsAvailable = true;
             _ = Task.Run(() => ListenAsync(_cancellation.Token));
